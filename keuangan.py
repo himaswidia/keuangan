@@ -1,88 +1,115 @@
 from datetime import datetime
 import pandas as pd
+import sqlite3
 import streamlit as st
 
-# Konfigurasi Halaman
+# --- INISIALISASI DATABASE SQLITE ---
+def init_db():
+  conn = sqlite3.connect("keuangan.db")
+  cursor = conn.cursor()
+  cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transaksi (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tanggal TEXT,
+            jenis TEXT,
+            kategori TEXT,
+            jumlah INTEGER,
+            keterangan TEXT
+        )
+    """)
+  conn.commit()
+  conn.close()
+
+
+# Panggil fungsi inisialisasi database
+init_db()
+
+
+# Fungsi untuk mengambil data dari SQLite
+def get_data():
+  conn = sqlite3.connect("keuangan.db")
+  df = pd.read_sql_query(
+      "SELECT tanggal, jenis, kategori, jumlah, keterangan FROM transaksi",
+      conn,
+  )
+  conn.close()
+  return df
+
+
+# Konfigurasi Halaman Streamlit
 st.set_page_config(
-    page_title="Dashboard Keuangan Bulanan", page_icon="💰", layout="wide"
+    page_title="Dashboard Keuangan SQLite", page_icon="💰", layout="wide"
 )
 
-st.title("💰 Aplikasi Pencatatan Keuangan Bulanan")
+st.title("💰 Aplikasi Pencatatan Keuangan Bulanan (SQLite)")
 st.write(
-    "Catat pemasukan dan pengeluaranmu setiap bulan dengan mudah dan cepat."
+    "Data transaksi tersimpan aman di database lokal dan diolah otomatis per"
+    " bulan."
 )
 
 # Sidebar untuk Input Transaksi
 st.sidebar.header("➕ Tambah Transaksi Baru")
 
 with st.sidebar.form("form_transaksi"):
-    tanggal = st.date_input("Tanggal Transaksi", datetime.today())
-    jenis = st.selectbox("Jenis Transaksi", ["Pemasukan", "Pengeluaran"])
+  tanggal = st.date_input("Tanggal Transaksi", datetime.today())
+  jenis = st.selectbox("Jenis Transaksi", ["Pemasukan", "Pengeluaran"])
 
-    # Kategori dinamis berdasarkan jenis transaksi
-    if jenis == "Pemasukan":
-        kategori = st.selectbox(
-            "Kategori", ["Gaji", "Bonus", "Investasi", "Lainnya (Masuk)"]
-        )
-    else:
-        kategori = st.selectbox(
-            "Kategori",
-            [
-                "Makanan",
-                "Transportasi",
-                "Belanja",
-                "Tagihan",
-                "Hiburan",
-                "Lainnya (Keluar)",
-            ],
-        )
-
-    jumlah = st.number_input("Jumlah (Rp)", min_value=0, step=10000)
-    keterangan = st.text_area("Keterangan (Opsional)")
-
-    submit_button = st.form_submit_button(label="Simpan Transaksi")
-
-# Inisialisasi Data Session State (Database Lokal Sementara)
-if "data_keuangan" not in st.session_state:
-    st.session_state.data_keuangan = pd.DataFrame(
-        columns=[
-            "Tanggal",
-            "Bulan",
-            "Jenis",
-            "Kategori",
-            "Jumlah",
-            "Keterangan",
-        ]
+  if jenis == "Pemasukan":
+    kategori = st.selectbox(
+        "Kategori", ["Gaji", "Bonus", "Investasi", "Lainnya (Masuk)"]
+    )
+  else:
+    kategori = st.selectbox(
+        "Kategori",
+        [
+            "Makanan",
+            "Transportasi",
+            "Belanja",
+            "Tagihan",
+            "Asuransi",
+            "Hiburan",
+            "Lainnya (Keluar)",
+        ],
     )
 
+  jumlah = st.number_input("Jumlah (Rp)", min_value=0, step=10000)
+  keterangan = st.text_area("Keterangan (Opsional)")
+
+  submit_button = st.form_submit_button(label="Simpan Transaksi")
+
+# Proses saat tombol simpan ditekan
 if submit_button:
-    # Ekstrak bulan dari tanggal (Format: 'YYYY-MM') untuk pengelompokan bulanan
-    bulan_str = tanggal.strftime("%Y-%m")
-
-    data_baru = pd.DataFrame(
-        {
-            "Tanggal": [str(tanggal)],
-            "Bulan": [bulan_str],
-            "Jenis": [jenis],
-            "Kategori": [kategori],
-            "Jumlah": [jumlah],
-            "Keterangan": [keterangan],
-        }
+  try:
+    conn = sqlite3.connect("keuangan.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+            INSERT INTO transaksi (tanggal, jenis, kategori, jumlah, keterangan)
+            VALUES (?, ?, ?, ?, ?)
+        """,
+        (str(tanggal), jenis, kategori, int(jumlah), str(keterangan)),
     )
+    conn.commit()
+    conn.close()
+    st.sidebar.success("✅ Transaksi berhasil disimpan ke database!")
+    st.rerunn()  # Refresh halaman agar data langsung muncul
+  except Exception as e:
+    st.sidebar.error(f"❌ Gagal menyimpan data: {e}")
 
-    st.session_state.data_keuangan = pd.concat(
-        [st.session_state.data_keuangan, data_baru], ignore_index=True
-    )
-    st.sidebar.success("Transaksi berhasil dicatat!")
-
-# --- TAMPILAN UTAMA DASHBOARD ---
-df = st.session_state.data_keuangan
+# --- TARIK & OLAH DATA DI STREAMLIT ---
+df = get_data()
 
 if not df.empty:
-    st.divider()
+  # Konversi kolom Tanggal ke format datetime dan ekstrak Bulan (YYYY-MM)
+  df["Tanggal_DT"] = pd.to_datetime(df["tanggal"], errors="coerce")
+  df = df.dropna(subset=["Tanggal_DT"])
+  df["Bulan"] = df["Tanggal_DT"].dt.strftime("%Y-%m")
 
-    # Filter Periode Bulan
-    daftar_bulan = sorted(df["Bulan"].unique(), reverse=True)
+  st.divider()
+
+  # Filter Periode Bulan
+  daftar_bulan = sorted(df["Bulan"].unique(), reverse=True)
+  if daftar_bulan:
     pilih_bulan = st.selectbox(
         "📅 Pilih Periode Bulan untuk Dilihat:", daftar_bulan
     )
@@ -93,11 +120,11 @@ if not df.empty:
     st.subheader(f"📊 Ringkasan Keuangan Periode: {pilih_bulan}")
 
     # Hitung Ringkasan
-    total_pemasukan = df_filtered[df_filtered["Jenis"] == "Pemasukan"][
-        "Jumlah"
+    total_pemasukan = df_filtered[df_filtered["jenis"] == "Pemasukan"][
+        "jumlah"
     ].sum()
-    total_pengeluaran = df_filtered[df_filtered["Jenis"] == "Pengeluaran"][
-        "Jumlah"
+    total_pengeluaran = df_filtered[df_filtered["jenis"] == "Pengeluaran"][
+        "jumlah"
     ].sum()
     sisa_saldo = total_pemasukan - total_pengeluaran
 
@@ -113,17 +140,16 @@ if not df.empty:
     st.divider()
 
     st.subheader(f"📋 Riwayat Transaksi ({pilih_bulan})")
-    st.dataframe(df_filtered, use_container_width=True)
-
-    # Tombol Ekspor CSV (Cadangan lokal)
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="📥 Unduh Seluruh Data ke CSV",
-        data=csv,
-        file_name="keuangan_pribadi_bulanan.csv",
-        mime="text/csv",
-    )
+    # Ubah nama kolom agar lebih rapi saat ditampilkan di tabel
+    df_display = df_filtered[
+        ["tanggal", "jenis", "kategori", "jumlah", "keterangan"]
+    ].copy()
+    df_display.columns = ["Tanggal", "Jenis", "Kategori", "Jumlah", "Keterangan"]
+    st.dataframe(df_display, use_container_width=True)
+  else:
+    st.info("📁 Belum ada data transaksi yang valid.")
 else:
-    st.info(
-        "👋 Belum ada transaksi tercatat. Silakan masukkan data melalui form di sidebar sebelah kiri."
-    )
+  st.info(
+      "📁 Database masih kosong. Silakan tambah transaksi pertama melalui"
+      " sidebar di kiri."
+  )
